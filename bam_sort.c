@@ -9,6 +9,7 @@
 #include "ksort.h"
 
 static int g_is_by_qname = 0;
+static int g_interleave = 0;
 
 static int strnum_cmp(const char *_a, const char *_b)
 {
@@ -50,7 +51,16 @@ static inline int heap_lt(const heap1_t a, const heap1_t b)
 		int t;
 		if (a.b == 0 || b.b == 0) return a.b == 0? 1 : 0;
 		t = strnum_cmp(bam1_qname(a.b), bam1_qname(b.b));
-		return (t > 0 || (t == 0 && (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0)));
+		if (g_interleave) {
+			if(t>0) return 1;
+      uint8_t *p1=bam_aux_get(a.b, "HI");
+      uint8_t *p2=bam_aux_get(b.b, "HI");
+      if(p1 == NULL && p2 == NULL) return (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0);
+      else if(p1 == NULL) return 1;
+      else if(p2 == NULL) return -1;
+      else if(bam_aux2i(p1) == bam_aux2i(p2)) return (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0);
+      else return bam_aux2i(p1)-bam_aux2i(p2);
+		} else return (t > 0 || (t == 0 && (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0)));
 	} else return __pos_cmp(a, b);
 }
 
@@ -357,7 +367,16 @@ static inline int bam1_lt(const bam1_p a, const bam1_p b)
 {
 	if (g_is_by_qname) {
 		int t = strnum_cmp(bam1_qname(a), bam1_qname(b));
-		return (t < 0 || (t == 0 && (a->core.flag&0xc0) < (b->core.flag&0xc0)));
+		if (g_interleave) {
+			if(t!=0) return t;
+      uint8_t *p1=bam_aux_get(a, "HI");
+      uint8_t *p2=bam_aux_get(b, "HI");
+      if(p1 == NULL && p2 == NULL) return (a->core.flag&0xc0) < (b->core.flag&0xc0);
+      else if(p1 == NULL) return 1;
+      else if(p2 == NULL) return -1;
+      else if(bam_aux2i(p1) == bam_aux2i(p2)) return (a->core.flag&0xc0) < (b->core.flag&0xc0);
+      else return bam_aux2i(p1)<bam_aux2i(p2);
+		} else return (t < 0 || (t == 0 && (a->core.flag&0xc0) < (b->core.flag&0xc0)));
 	} else return (((uint64_t)a->core.tid<<32|(a->core.pos+1)<<1|bam1_strand(a)) < ((uint64_t)b->core.tid<<32|(b->core.pos+1)<<1|bam1_strand(b)));
 }
 KSORT_INIT(sort, bam1_p, bam1_lt)
@@ -440,7 +459,7 @@ static int sort_blocks(int n_files, size_t k, bam1_p *buf, const char *prefix, c
   and then merge them by calling bam_merge_core(). This function is
   NOT thread safe.
  */
-void bam_sort_core_ext(int is_by_qname, const char *fn, const char *prefix, size_t _max_mem, int is_stdout, int n_threads, int level, int full_path)
+void bam_sort_core_ext(int is_by_qname, int interleave, const char *fn, const char *prefix, size_t _max_mem, int is_stdout, int n_threads, int level, int full_path)
 {
 	int ret, i, n_files = 0;
 	size_t mem, max_k, k, max_mem;
@@ -453,6 +472,7 @@ void bam_sort_core_ext(int is_by_qname, const char *fn, const char *prefix, size
 
 	if (n_threads < 2) n_threads = 1;
 	g_is_by_qname = is_by_qname;
+	g_interleave = interleave;
 	max_k = k = 0; mem = 0;
 	max_mem = _max_mem * n_threads;
 	buf = 0;
@@ -528,17 +548,18 @@ void bam_sort_core_ext(int is_by_qname, const char *fn, const char *prefix, size
 	bam_close(fp);
 }
 
-void bam_sort_core(int is_by_qname, const char *fn, const char *prefix, size_t max_mem)
+void bam_sort_core(int is_by_qname, int interleave, const char *fn, const char *prefix, size_t max_mem)
 {
-	bam_sort_core_ext(is_by_qname, fn, prefix, max_mem, 0, 0, -1, 0);
+	bam_sort_core_ext(is_by_qname, interleave, fn, prefix, max_mem, 0, 0, -1, 0);
 }
 
 int bam_sort(int argc, char *argv[])
 {
 	size_t max_mem = 768<<20; // 512MB
-	int c, is_by_qname = 0, is_stdout = 0, n_threads = 0, level = -1, full_path = 0;
-	while ((c = getopt(argc, argv, "fnom:@:l:")) >= 0) {
+	int c, is_by_qname = 0, is_stdout = 0, n_threads = 0, level = -1, full_path = 0, interleave = 0;
+	while ((c = getopt(argc, argv, "ifnom:@:l:")) >= 0) {
 		switch (c) {
+		case 'i': interleave = 1; break;
 		case 'f': full_path = 1; break;
 		case 'o': is_stdout = 1; break;
 		case 'n': is_by_qname = 1; break;
@@ -558,6 +579,7 @@ int bam_sort(int argc, char *argv[])
 		fprintf(stderr, "\n");
 		fprintf(stderr, "Usage:   samtools sort [options] <in.bam> <out.prefix>\n\n");
 		fprintf(stderr, "Options: -n        sort by read name\n");
+		fprintf(stderr, "         -i        interleave mates when sorting by read name\n");
 		fprintf(stderr, "         -f        use <out.prefix> as full file name instead of prefix\n");
 		fprintf(stderr, "         -o        final output to stdout\n");
 		fprintf(stderr, "         -l INT    compression level, from 0 to 9 [-1]\n");
@@ -566,6 +588,6 @@ int bam_sort(int argc, char *argv[])
 		fprintf(stderr, "\n");
 		return 1;
 	}
-	bam_sort_core_ext(is_by_qname, argv[optind], argv[optind+1], max_mem, is_stdout, n_threads, level, full_path);
+	bam_sort_core_ext(is_by_qname, interleave, argv[optind], argv[optind+1], max_mem, is_stdout, n_threads, level, full_path);
 	return 0;
 }
