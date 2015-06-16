@@ -63,6 +63,7 @@ KHASH_MAP_INIT_STR(c2i, int)
 KLIST_INIT(hdrln, char*, __free_char)
 
 static int g_is_by_qname = 0;
+static int g_interleave = 0;
 
 static int strnum_cmp(const char *_a, const char *_b)
 {
@@ -105,7 +106,16 @@ static inline int heap_lt(const heap1_t a, const heap1_t b)
         int t;
         if (a.b == NULL || b.b == NULL) return a.b == NULL? 1 : 0;
         t = strnum_cmp(bam_get_qname(a.b), bam_get_qname(b.b));
-        return (t > 0 || (t == 0 && (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0)));
+        if (g_interleave) {
+            if(t>0) return 1;
+            uint8_t *p1=bam_aux_get(a.b, "HI");
+            uint8_t *p2=bam_aux_get(b.b, "HI");
+            if(p1 == NULL && p2 == NULL) return (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0);
+            else if(p1 == NULL) return 1;
+            else if(p2 == NULL) return -1;
+            else if(bam_aux2i(p1) == bam_aux2i(p2)) return (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0);
+            else return bam_aux2i(p1)-bam_aux2i(p2);
+        } else return (t > 0 || (t == 0 && (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0)));
     } else return __pos_cmp(a, b);
 }
 
@@ -931,7 +941,16 @@ static inline int bam1_lt(const bam1_p a, const bam1_p b)
 {
     if (g_is_by_qname) {
         int t = strnum_cmp(bam_get_qname(a), bam_get_qname(b));
-        return (t < 0 || (t == 0 && (a->core.flag&0xc0) < (b->core.flag&0xc0)));
+        if (g_interleave) {
+            if(t!=0) return t;
+            uint8_t *p1=bam_aux_get(a, "HI");
+            uint8_t *p2=bam_aux_get(b, "HI");
+            if(p1 == NULL && p2 == NULL) return (a->core.flag&0xc0) < (b->core.flag&0xc0);
+            else if(p1 == NULL) return 1;
+            else if(p2 == NULL) return -1;
+            else if(bam_aux2i(p1) == bam_aux2i(p2)) return (a->core.flag&0xc0) < (b->core.flag&0xc0);
+            else return bam_aux2i(p1)<bam_aux2i(p2);
+        } else return (t < 0 || (t == 0 && (a->core.flag&0xc0) < (b->core.flag&0xc0)));
     } else return (((uint64_t)a->core.tid<<32|(a->core.pos+1)<<1|bam_is_rev(a)) < ((uint64_t)b->core.tid<<32|(b->core.pos+1)<<1|bam_is_rev(b)));
 }
 KSORT_INIT(sort, bam1_p, bam1_lt)
@@ -1015,7 +1034,7 @@ static int sort_blocks(int n_files, size_t k, bam1_p *buf, const char *prefix, c
   and then merge them by calling bam_merge_core(). This function is
   NOT thread safe.
  */
-int bam_sort_core_ext(int is_by_qname, const char *fn, const char *prefix, const char *fnout, const char *modeout, size_t _max_mem, int n_threads)
+int bam_sort_core_ext(int is_by_qname, int interleave, const char *fn, const char *prefix, const char *fnout, const char *modeout, size_t _max_mem, int n_threads)
 {
     int ret, i, n_files = 0;
     size_t mem, max_k, k, max_mem;
@@ -1025,6 +1044,7 @@ int bam_sort_core_ext(int is_by_qname, const char *fn, const char *prefix, const
 
     if (n_threads < 2) n_threads = 1;
     g_is_by_qname = is_by_qname;
+    g_interleave = interleave;
     max_k = k = 0; mem = 0;
     max_mem = _max_mem * n_threads;
     buf = NULL;
@@ -1093,12 +1113,12 @@ int bam_sort_core_ext(int is_by_qname, const char *fn, const char *prefix, const
     return 0;
 }
 
-int bam_sort_core(int is_by_qname, const char *fn, const char *prefix, size_t max_mem)
+int bam_sort_core(int is_by_qname, int interleave, const char *fn, const char *prefix, size_t max_mem)
 {
     int ret;
     char *fnout = calloc(strlen(prefix) + 4 + 1, 1);
     sprintf(fnout, "%s.bam", prefix);
-    ret = bam_sort_core_ext(is_by_qname, fn, prefix, fnout, "wb", max_mem, 0);
+    ret = bam_sort_core_ext(is_by_qname, interleave, fn, prefix, fnout, "wb", max_mem, 0);
     free(fnout);
     return ret;
 }
@@ -1111,6 +1131,7 @@ static int sort_usage(FILE *fp, int status)
 "  -l INT     Set compression level, from 0 (uncompressed) to 9 (best)\n"
 "  -m INT     Set maximum memory per thread; suffix K/M/G recognized [768M]\n"
 "  -n         Sort by read name\n"
+"  -i         Interleave mates when sorting by read name\n"
 "  -o FILE    Write final output to FILE rather than standard output\n"
 "  -O FORMAT  Write output as FORMAT ('sam'/'bam'/'cram')   (either -O or\n"
 "  -T PREFIX  Write temporary files to PREFIX.nnnn.bam       -T is required)\n"
@@ -1127,7 +1148,7 @@ static int sort_usage(FILE *fp, int status)
 int bam_sort(int argc, char *argv[])
 {
     size_t max_mem = 768<<20; // 512MB
-    int c, i, modern, nargs, is_by_qname = 0, is_stdout = 0, ret = EXIT_SUCCESS, n_threads = 0, level = -1, full_path = 0;
+    int c, i, modern, nargs, is_by_qname = 0, is_stdout = 0, ret = EXIT_SUCCESS, n_threads = 0, level = -1, full_path = 0, interleave = 0;
     char *fnout = "-", *fmtout = NULL, modeout[12], *tmpprefix = NULL;
     kstring_t fnout_buffer = { 0, 0, NULL };
 
@@ -1135,8 +1156,9 @@ int bam_sort(int argc, char *argv[])
     for (i = 1; i < argc; ++i)
         if (argv[i][0] == '-' && strpbrk(argv[i], "OT")) { modern = 1; break; }
 
-    while ((c = getopt(argc, argv, modern? "l:m:no:O:T:@:" : "fnom:@:l:")) >= 0) {
+    while ((c = getopt(argc, argv, modern? "il:m:no:O:T:@:" : "ifnom:@:l:")) >= 0) {
         switch (c) {
+        case 'i': interleave = 1; break;
         case 'f': full_path = 1; break;
         case 'o': if (modern) fnout = optarg; else is_stdout = 1; break;
         case 'n': is_by_qname = 1; break;
@@ -1188,7 +1210,7 @@ int bam_sort(int argc, char *argv[])
         goto sort_end;
     }
 
-    if (bam_sort_core_ext(is_by_qname, (nargs > 0)? argv[optind] : "-", tmpprefix, fnout, modeout, max_mem, n_threads) < 0) ret = EXIT_FAILURE;
+    if (bam_sort_core_ext(is_by_qname, interleave, (nargs > 0)? argv[optind] : "-", tmpprefix, fnout, modeout, max_mem, n_threads) < 0) ret = EXIT_FAILURE;
 
 sort_end:
     free(fnout_buffer.s);
