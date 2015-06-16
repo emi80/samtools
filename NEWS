@@ -1,3 +1,9 @@
+Beta Release 1.2-rglab-CRG  (16 June 2015)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+*  Add 'samtools sort' option to interleave mates when sorting by query name
+
+
 Beta Release 1.2  (2 February 2015)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
