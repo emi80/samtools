@@ -107,7 +107,7 @@ static inline int heap_lt(const heap1_t a, const heap1_t b)
         if (a.b == NULL || b.b == NULL) return a.b == NULL? 1 : 0;
         t = strnum_cmp(bam_get_qname(a.b), bam_get_qname(b.b));
         if (g_interleave) {
-            if(t>0) return 1;
+            if(t!=0) return (t>0);
             uint8_t *p1=bam_aux_get(a.b, "HI");
             uint8_t *p2=bam_aux_get(b.b, "HI");
             if(p1 == NULL && p2 == NULL) return (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0);
@@ -942,7 +942,7 @@ static inline int bam1_lt(const bam1_p a, const bam1_p b)
     if (g_is_by_qname) {
         int t = strnum_cmp(bam_get_qname(a), bam_get_qname(b));
         if (g_interleave) {
-            if(t!=0) return t;
+            if(t!=0) return (t < 0);
             uint8_t *p1=bam_aux_get(a, "HI");
             uint8_t *p2=bam_aux_get(b, "HI");
             if(p1 == NULL && p2 == NULL) return (a->core.flag&0xc0) < (b->core.flag&0xc0);
