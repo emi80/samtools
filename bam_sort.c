@@ -592,7 +592,7 @@ int* rtrans_build(int n, int n_targets, trans_tbl_t* translation_tbl)
   @discussion Padding information may NOT correctly maintained. This
   function is NOT thread safe.
  */
-int bam_merge_core2(int by_qname, const char *out, const char *mode, const char *headers, int n, char * const *fn, int flag, const char *reg, int n_threads)
+int bam_merge_core2(int by_qname, int interleave, const char *out, const char *mode, const char *headers, int n, char * const *fn, int flag, const char *reg, int n_threads)
 {
     samFile *fpout, **fp;
     heap1_t *heap;
@@ -617,6 +617,7 @@ int bam_merge_core2(int by_qname, const char *out, const char *mode, const char 
     }
 
     g_is_by_qname = by_qname;
+    g_interleave = interleave;
     fp = (samFile**)calloc(n, sizeof(samFile*));
     heap = (heap1_t*)calloc(n, sizeof(heap1_t));
     iter = (hts_itr_t**)calloc(n, sizeof(hts_itr_t*));
@@ -779,19 +780,20 @@ int bam_merge_core2(int by_qname, const char *out, const char *mode, const char 
     return 0;
 }
 
-int bam_merge_core(int by_qname, const char *out, const char *headers, int n, char * const *fn, int flag, const char *reg)
+int bam_merge_core(int by_qname, int interleave, const char *out, const char *headers, int n, char * const *fn, int flag, const char *reg)
 {
     char mode[12];
     strcpy(mode, "wb");
     if (flag & MERGE_UNCOMP) strcat(mode, "0");
     else if (flag & MERGE_LEVEL1) strcat(mode, "1");
-    return bam_merge_core2(by_qname, out, mode, headers, n, fn, flag, reg, 0);
+    return bam_merge_core2(by_qname, interleave, out, mode, headers, n, fn, flag, reg, 0);
 }
 
 static void merge_usage(FILE *to)
 {
     fprintf(to, "Usage:   samtools merge [-nurlf] [-h inh.sam] [-b <bamlist.fofn>] <out.bam> <in1.bam> <in2.bam> [<in3.bam> ... <inN.bam>]\n\n");
     fprintf(to, "Options: -n       sort by read names\n");
+    fprintf(to, "         -i       interleave mates when sorting by read names\n");
     fprintf(to, "         -r       attach RG tag (inferred from file names)\n");
     fprintf(to, "         -u       uncompressed BAM output\n");
     fprintf(to, "         -f       overwrite the output BAM if exist\n");
@@ -808,7 +810,7 @@ static void merge_usage(FILE *to)
 
 int bam_merge(int argc, char *argv[])
 {
-    int c, is_by_qname = 0, flag = 0, ret = 0, n_threads = 0, level = -1;
+    int c, is_by_qname = 0, flag = 0, ret = 0, n_threads = 0, level = -1, interleave = 0;
     char *fn_headers = NULL, *reg = NULL, mode[12];
     long random_seed = (long)time(NULL);
     char** fn = NULL;
@@ -819,12 +821,13 @@ int bam_merge(int argc, char *argv[])
         return 0;
     }
 
-    while ((c = getopt(argc, argv, "h:nru1R:f@:l:cps:b:")) >= 0) {
+    while ((c = getopt(argc, argv, "ih:nru1R:f@:l:cps:b:")) >= 0) {
         switch (c) {
         case 'r': flag |= MERGE_RG; break;
         case 'f': flag |= MERGE_FORCE; break;
         case 'h': fn_headers = strdup(optarg); break;
         case 'n': is_by_qname = 1; break;
+        case 'i': interleave = 1; break;
         case '1': flag |= MERGE_LEVEL1; level = 1; break;
         case 'u': flag |= MERGE_UNCOMP; level = 0; break;
         case 'R': reg = strdup(optarg); break;
@@ -882,7 +885,7 @@ int bam_merge(int argc, char *argv[])
     }
     strcpy(mode, "wb");
     if (level >= 0) sprintf(strchr(mode, '\0'), "%d", level < 9? level : 9);
-    if (bam_merge_core2(is_by_qname, argv[optind], mode, fn_headers, fn_size+nargcfiles, fn, flag, reg, n_threads) < 0) ret = 1;
+    if (bam_merge_core2(is_by_qname, interleave, argv[optind], mode, fn_headers, fn_size+nargcfiles, fn, flag, reg, n_threads) < 0) ret = 1;
 end:
     if (fn_size > 0) {
         int i;
@@ -1094,7 +1097,7 @@ int bam_sort_core_ext(int is_by_qname, int interleave, const char *fn, const cha
             fns[i] = (char*)calloc(strlen(prefix) + 20, 1);
             sprintf(fns[i], "%s.%.4d.bam", prefix, i);
         }
-        if (bam_merge_core2(is_by_qname, fnout, modeout, NULL, n_files, fns, MERGE_COMBINE_RG|MERGE_COMBINE_PG, NULL, n_threads) < 0) {
+        if (bam_merge_core2(is_by_qname, interleave, fnout, modeout, NULL, n_files, fns, MERGE_COMBINE_RG|MERGE_COMBINE_PG, NULL, n_threads) < 0) {
             // Propagate bam_merge_core2() failure; it has already emitted a
             // message explaining the failure, so no further message is needed.
             return -1;
