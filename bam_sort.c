@@ -114,7 +114,7 @@ static inline int heap_lt(const heap1_t a, const heap1_t b)
             else if(p1 == NULL) return 1;
             else if(p2 == NULL) return -1;
             else if(bam_aux2i(p1) == bam_aux2i(p2)) return (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0);
-            else return bam_aux2i(p1)-bam_aux2i(p2);
+            else return bam_aux2i(p1) > bam_aux2i(p2);
         } else return (t > 0 || (t == 0 && (a.b->core.flag&0xc0) > (b.b->core.flag&0xc0)));
     } else return __pos_cmp(a, b);
 }
@@ -952,7 +952,7 @@ static inline int bam1_lt(const bam1_p a, const bam1_p b)
             else if(p1 == NULL) return 1;
             else if(p2 == NULL) return -1;
             else if(bam_aux2i(p1) == bam_aux2i(p2)) return (a->core.flag&0xc0) < (b->core.flag&0xc0);
-            else return bam_aux2i(p1)<bam_aux2i(p2);
+            else return bam_aux2i(p1) < bam_aux2i(p2);
         } else return (t < 0 || (t == 0 && (a->core.flag&0xc0) < (b->core.flag&0xc0)));
     } else return (((uint64_t)a->core.tid<<32|(a->core.pos+1)<<1|bam_is_rev(a)) < ((uint64_t)b->core.tid<<32|(b->core.pos+1)<<1|bam_is_rev(b)));
 }
